@@ -1,0 +1,45 @@
+version: 1
+language: java
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: java -jar /opt/junit/junit.jar execute --class-path out/main:out/test --scan-class-path --disable-banner --details=summary
+  timeout_s: 120
+
+benchmark:
+  command: java -cp out/main:out/bench Run
+  timeout_s: 900
+  # On the measuring host: choose the load so that one run takes >= 20 s.
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "150"   # ~0.16 s per round here – adjust on the measuring host
+
+limits:
+  cpus: 1.0
+  memory: 1g
+  # cpuset: "2"   # on the measuring host, pin to a fixed core
+
+measurement:
+  repetitions: 10
+  min_repetitions: 5
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+# Profiling with Java Flight Recorder (via JAVA_TOOL_OPTIONS, no extra image needed)
+profile:
+  env:
+    BENCH_ROUNDS: "30"
+
+# Candidates must not change tests, benchmark or build.
+protected_paths: [src/test, bench, joulecode.yml, Dockerfile]
+
+optimize:
+  hotspots: 2
+  candidates_per_hotspot: 2
+  repair_attempts: 2
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

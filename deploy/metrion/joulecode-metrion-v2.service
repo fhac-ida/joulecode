@@ -1,0 +1,26 @@
+# METRION ≥ 0.2 as an on-demand service for joule:code (back-end "metrion").
+#
+# It is NOT started permanently: joule:code starts it at the beginning of a
+# measurement campaign and stops it afterwards (sudoers rule from scripts/install.sh).
+# metrion reads metrion.yaml and calibration.json from the working directory and
+# writes every run next to them with a UTC timestamp (monitor_<ts>, energy_<ts>).
+
+[Unit]
+Description=METRION energy measurement for joule:code (on demand)
+After=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=@METRION_WORKDIR@
+# remove runs older than 7 days (copies of the results are kept in the joule:code result directory).
+ExecStartPre=-/usr/bin/find @METRION_WORKDIR@ -maxdepth 1 -name monitor_* -mtime +7 -exec rm -rf {} +
+ExecStartPre=-/usr/bin/find @METRION_WORKDIR@ -maxdepth 1 -name energy_* -mtime +7 -exec rm -rf {} +
+ExecStart=@METRION_BIN@ monitor --config @METRION_WORKDIR@/metrion.yaml
+# SIGINT to the main process only: it ends its helpers itself and writes the
+# last time windows. The helpers ignore SIGINT; whatever is still running after
+# TimeoutStopSec is killed by systemd.
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=15min
+# results readable for everyone so that joule:code can analyse them without root.
+UMask=0022

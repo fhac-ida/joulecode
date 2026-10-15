@@ -1,0 +1,11 @@
+{
+  "name": "js-helpdesk",
+  "private": true,
+  "description": "joule:code example with a lot of code: helpdesk/ticket system (threading, SLA, assignment, reports)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "bench": "node bench/run.js"
+  }
+}

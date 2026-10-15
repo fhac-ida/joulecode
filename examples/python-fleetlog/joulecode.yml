@@ -1,0 +1,44 @@
+version: 1
+language: python
+
+# Long example (~1,400 lines in 8 modules): fleet telematics. The hotspots hide in a lot of
+# unremarkable code, one of them in a file with > 400 lines (trips.py) – there the optimiser
+# only sees the function, not the whole file.
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: pytest -q -p no:cacheprovider tests
+  timeout_s: 120
+
+benchmark:
+  command: python bench/run.py
+  timeout_s: 900
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "16"    # calibrated on the measuring host (suite.py check): >= 20 s per run
+
+limits:
+  cpus: 1.0
+  memory: 1g
+
+measurement:
+  repetitions: 10
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+profile:
+  env:
+    BENCH_ROUNDS: "1"
+
+optimize:
+  # The fuel-level lookup is spread over three small functions (~6 % each).
+  min_share: 0.04
+  hotspots: 3
+  candidates_per_hotspot: 2
+  repair_attempts: 1
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

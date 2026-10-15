@@ -1,0 +1,45 @@
+version: 1
+language: php
+
+# Long example (~1,400 lines in 13 classes): web shop back end. Hotspots hide in a lot of
+# unremarkable code, one of them in a file with > 400 lines (Catalog.php).
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: vendor/bin/phpunit --do-not-cache-result tests
+  timeout_s: 120
+
+benchmark:
+  command: php bench/run.php
+  timeout_s: 900
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "14"    # calibrated on the measuring host (suite.py check): >= 20 s per run
+
+limits:
+  cpus: 1.0
+  memory: 512m
+
+measurement:
+  repetitions: 10
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+# Xdebug slows things down a lot – one round with fewer orders is enough for the profile.
+profile:
+  env:
+    BENCH_ROUNDS: "1"
+    BENCH_ORDERS: "150"
+
+protected_paths: [tests, bench, joulecode.yml, composer.json, composer.lock]
+
+optimize:
+  hotspots: 3
+  candidates_per_hotspot: 2
+  repair_attempts: 2
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

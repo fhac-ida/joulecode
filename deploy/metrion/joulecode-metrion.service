@@ -1,0 +1,21 @@
+# METRION (GitHub version) as an on-demand service for joule:code (back-end "metrion-legacy").
+#
+# It is NOT started permanently: joule:code starts it at the beginning of a
+# measurement campaign and stops it afterwards (sudoers rule from scripts/install.sh).
+# Every start begins with a fresh database.
+
+[Unit]
+Description=METRION energy measurement for joule:code (on demand)
+After=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=@METRION_DIR@
+ExecStartPre=/usr/bin/mkdir -p /var/lib/metrion
+ExecStartPre=/usr/bin/rm -f /var/lib/metrion/monitor.db /var/lib/metrion/monitor.db.wal
+ExecStart=@METRION_DIR@/.venv/bin/metrion monitor --config /etc/joulecode/metrion.yaml
+# metrion shuts down cleanly on SIGINT and writes the last data while doing so.
+KillSignal=SIGINT
+TimeoutStopSec=15min
+# database readable for everyone so that joule:code can analyse it without root.
+UMask=0022

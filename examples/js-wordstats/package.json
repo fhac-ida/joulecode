@@ -1,0 +1,11 @@
+{
+  "name": "js-wordstats",
+  "private": true,
+  "description": "joule:code example: text statistics in JavaScript with typical inefficiencies",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "bench": "node bench/run.js"
+  }
+}

@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use joule:code in your research, please cite it as below."
+type: software
+title: "joule:code: Measuring and Improving the Energy Efficiency of Software"
+abstract: >-
+  joule:code finds the functions where a program spends its energy, lets a local LLM
+  propose optimised versions, and accepts a change only if it passes the original test
+  suite and uses significantly less energy in repeated, interleaved measurements.
+authors:
+  - name: "Institute for Digitalization Aachen | FH Aachen University of Applied Sciences | Project GreenCode"
+version: 0.2.0.dev0
+license: MIT
+keywords:
+  - energy efficiency
+  - green software
+  - software energy measurement
+  - LLM-based code optimization
+  - RAPL

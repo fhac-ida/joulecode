@@ -1,0 +1,48 @@
+diff --git a/src/logstats/aggregate.py b/src/logstats/aggregate.py
+--- a/src/logstats/aggregate.py
++++ b/src/logstats/aggregate.py
+@@ -18,14 +18,13 @@
+ 
+     The endpoints appear in the order of their first occurrence.
+     """
+-    endpoints = []
++    groups: dict[str, list[Request]] = {}
+     for r in requests:
+-        if r.endpoint not in endpoints:
+-            endpoints.append(r.endpoint)
++        groups.setdefault(r.endpoint, []).append(r)
+     stats = {}
+-    for ep in endpoints:
+-        durations = [r.duration_ms for r in requests if r.endpoint == ep]  # all requests per endpoint
+-        errors = len([r for r in requests if r.endpoint == ep and r.status >= 500])
++    for ep, group in groups.items():
++        durations = [r.duration_ms for r in group]
++        errors = sum(1 for r in group if r.status >= 500)
+         stats[ep] = {
+             "count": len(durations),
+             "error_rate": errors / len(durations),
+@@ -38,13 +37,4 @@
+ 
+ def slowest_requests(requests: list[Request], n: int = 5) -> list[Request]:
+     """The n slowest requests, in descending order; on a tie the earlier one first."""
+-    remaining = list(requests)
+-    result = []
+-    while remaining and len(result) < n:
+-        slowest = remaining[0]
+-        for r in remaining:
+-            if r.duration_ms > slowest.duration_ms:
+-                slowest = r
+-        result.append(slowest)
+-        remaining.remove(slowest)
+-    return result
++    return sorted(requests, key=lambda r: -r.duration_ms)[:n]
+diff --git a/src/logstats/parser.py b/src/logstats/parser.py
+--- a/src/logstats/parser.py
++++ b/src/logstats/parser.py
+@@ -50,5 +50,5 @@
+     for line in text.splitlines():
+         req = parse_line(line)
+         if req is not None:
+-            requests = requests + [req]  # rebuilds the list every time
++            requests.append(req)
+     return requests

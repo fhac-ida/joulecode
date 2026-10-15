@@ -1,0 +1,45 @@
+version: 1
+language: javascript
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: node --test tests/*.test.js
+  timeout_s: 120
+
+benchmark:
+  command: node bench/run.js
+  timeout_s: 900
+  # On the measuring host: choose the load so that one run takes >= 20 s.
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "120"   # ~0.18 s per round here – adjust on the measuring host
+
+limits:
+  cpus: 1.0
+  memory: 512m
+  # cpuset: "2"   # on the measuring host, pin to a fixed core
+
+measurement:
+  repetitions: 10
+  min_repetitions: 5
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+# Profiling with `node --cpu-prof` (via NODE_OPTIONS, no extra image needed)
+profile:
+  env:
+    BENCH_ROUNDS: "10"
+
+# Candidates must not change dependencies.
+protected_paths: [tests, bench, joulecode.yml, package.json, package-lock.json]
+
+optimize:
+  hotspots: 2
+  candidates_per_hotspot: 2
+  repair_attempts: 2
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

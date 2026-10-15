@@ -1,0 +1,44 @@
+version: 1
+language: javascript
+
+# Long example (~1,200 lines in 10 modules): helpdesk/ticket system. Hotspots hide in a lot of
+# unremarkable code; tickets.js has > 400 lines (there the optimiser only sees excerpts).
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: node --test tests/*.test.js
+  timeout_s: 120
+
+benchmark:
+  command: node bench/run.js
+  timeout_s: 900
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "10"    # calibrated on the measuring host (suite.py check): >= 20 s per run
+
+limits:
+  cpus: 1.0
+  memory: 1g
+
+measurement:
+  repetitions: 10
+  min_repetitions: 5
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+profile:
+  env:
+    BENCH_ROUNDS: "1"
+
+protected_paths: [tests, bench, joulecode.yml, package.json, package-lock.json]
+
+optimize:
+  hotspots: 3
+  candidates_per_hotspot: 2
+  repair_attempts: 2
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

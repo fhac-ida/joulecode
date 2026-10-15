@@ -1,0 +1,152 @@
+diff --git a/src/fleetlog/fuel.py b/src/fleetlog/fuel.py
+--- a/src/fleetlog/fuel.py
++++ b/src/fleetlog/fuel.py
+@@ -7,6 +7,7 @@
+ 
+ from __future__ import annotations
+ 
++from bisect import bisect_left, bisect_right
+ from collections import defaultdict
+ from collections.abc import Iterable, Sequence
+ from dataclasses import dataclass
+@@ -27,41 +28,58 @@
+     note: str = ""
+ 
+ 
+-def _level_before(events: Sequence[FuelEvent], vehicle_id: str, ts: datetime) -> FuelEvent | None:
+-    """Last fuel level report at most LEVEL_WINDOW before `ts`."""
+-    best = None
+-    for e in events:
+-        if e.vehicle_id != vehicle_id or e.kind != "level":
+-            continue
+-        if ts - LEVEL_WINDOW <= e.ts <= ts and (best is None or e.ts > best.ts):
+-            best = e
+-    return best
+-
+-
+-def _level_after(events: Sequence[FuelEvent], vehicle_id: str, ts: datetime) -> FuelEvent | None:
+-    """First fuel level report at most LEVEL_WINDOW after `ts`."""
+-    best = None
+-    for e in events:
+-        if e.vehicle_id != vehicle_id or e.kind != "level":
+-            continue
+-        if ts <= e.ts <= ts + LEVEL_WINDOW and (best is None or e.ts < best.ts):
+-            best = e
+-    return best
++class _FuelIndex:
++    """Reports per vehicle, stably sorted by time (same time: input order)."""
+ 
++    def __init__(self, events: Sequence[FuelEvent]) -> None:
++        levels: dict[str, list[FuelEvent]] = defaultdict(list)
++        refuels: dict[str, list[FuelEvent]] = defaultdict(list)
++        for e in events:
++            if e.kind == "level":
++                levels[e.vehicle_id].append(e)
++            elif e.kind == "refuel":
++                refuels[e.vehicle_id].append(e)
++        self.levels = {vid: sorted(evs, key=lambda e: e.ts) for vid, evs in levels.items()}
++        self.level_ts = {vid: [e.ts for e in evs] for vid, evs in self.levels.items()}
++        self.refuels = {vid: sorted(evs, key=lambda e: e.ts) for vid, evs in refuels.items()}
++        self.refuel_ts = {vid: [e.ts for e in evs] for vid, evs in self.refuels.items()}
++
++    def level_before(self, vehicle_id: str, ts: datetime) -> FuelEvent | None:
++        times = self.level_ts.get(vehicle_id)
++        if not times:
++            return None
++        i = bisect_right(times, ts) - 1
++        if i < 0 or times[i] < ts - LEVEL_WINDOW:
++            return None
++        i = bisect_left(times, times[i])  # at the same time the first report applies
++        return self.levels[vehicle_id][i]
++
++    def level_after(self, vehicle_id: str, ts: datetime) -> FuelEvent | None:
++        times = self.level_ts.get(vehicle_id)
++        if not times:
++            return None
++        i = bisect_left(times, ts)
++        if i == len(times) or times[i] > ts + LEVEL_WINDOW:
++            return None
++        return self.levels[vehicle_id][i]
++
++    def refuels_between(self, vehicle_id: str, a: datetime, b: datetime) -> float:
++        times = self.refuel_ts.get(vehicle_id)
++        if not times:
++            return 0
++        evs = self.refuels[vehicle_id][bisect_left(times, a) : bisect_right(times, b)]
++        return sum(e.value for e in evs)
+ 
+-def _refuels_between(events: Sequence[FuelEvent], vehicle_id: str, a: datetime, b: datetime) -> float:
+-    return sum(e.value for e in events if e.vehicle_id == vehicle_id and e.kind == "refuel" and a <= e.ts <= b)
+ 
+-
+-def fuel_for_trip(trip: Trip, events: Sequence[FuelEvent], fleet: FleetIndex) -> TripFuel:
++def _fuel_for_trip(trip: Trip, index: _FuelIndex, fleet: FleetIndex) -> TripFuel:
+     vehicle = fleet.vehicle(trip.vehicle_id)
+     if vehicle is None:
+         return TripFuel(trip.vehicle_id, trip.start, None, None, "unknown vehicle")
+-    before = _level_before(events, trip.vehicle_id, trip.start)
+-    after = _level_after(events, trip.vehicle_id, trip.end)
++    before = index.level_before(trip.vehicle_id, trip.start)
++    after = index.level_after(trip.vehicle_id, trip.end)
+     if before is None or after is None:
+         return TripFuel(trip.vehicle_id, trip.start, None, None, "no fuel level")
+-    refuel = _refuels_between(events, trip.vehicle_id, before.ts, after.ts)
++    refuel = index.refuels_between(trip.vehicle_id, before.ts, after.ts)
+     liters = (before.value - after.value) / 100 * vehicle.tank_liters + refuel
+     if liters < 0:
+         return TripFuel(trip.vehicle_id, trip.start, None, None, "fuel level rose without refuelling")
+@@ -74,9 +92,14 @@
+     )
+ 
+ 
++def fuel_for_trip(trip: Trip, events: Sequence[FuelEvent], fleet: FleetIndex) -> TripFuel:
++    return _fuel_for_trip(trip, _FuelIndex(events), fleet)
++
++
+ def fuel_report(trips: Iterable[Trip], events: Sequence[FuelEvent], fleet: FleetIndex) -> list[TripFuel]:
+     """Consumption per trip in the order of the trips."""
+-    return [fuel_for_trip(t, events, fleet) for t in trips]
++    index = _FuelIndex(events)
++    return [_fuel_for_trip(t, index, fleet) for t in trips]
+ 
+ 
+ def consumption_by_vehicle(report: Iterable[TripFuel]) -> dict[str, float]:
+diff --git a/src/fleetlog/trips.py b/src/fleetlog/trips.py
+--- a/src/fleetlog/trips.py
++++ b/src/fleetlog/trips.py
+@@ -28,16 +28,16 @@
+ 
+     def __init__(self, vehicles: Iterable[Vehicle]) -> None:
+         self.vehicles: list[Vehicle] = list(vehicles)
++        self._by_id: dict[str, Vehicle] = {}
++        for v in self.vehicles:
++            self._by_id.setdefault(v.vehicle_id, v)  # with duplicate IDs the first entry applies
+ 
+     def __len__(self) -> int:
+         return len(self.vehicles)
+ 
+     def vehicle(self, vehicle_id: str) -> Vehicle | None:
+         """Vehicle for the ID or None. With duplicate IDs the first entry applies."""
+-        for v in self.vehicles:
+-            if v.vehicle_id == vehicle_id:
+-                return v
+-        return None
++        return self._by_id.get(vehicle_id)
+ 
+     def kind_of(self, vehicle_id: str) -> VehicleKind:
+         """Vehicle kind; unknown vehicles are treated like cars."""
+@@ -72,12 +72,12 @@
+     after dead zones). The first report is kept in each case, and the order of the
+     input is preserved.
+     """
+-    seen = []
++    seen: set[tuple[str, datetime]] = set()
+     out = []
+     for p in points:
+         key = (p.vehicle_id, p.ts)
+         if key not in seen:
+-            seen.append(key)
++            seen.add(key)
+             out.append(p)
+     return out
+ 

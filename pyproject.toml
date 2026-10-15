@@ -1,0 +1,73 @@
+[project]
+name = "joulecode"
+version = "0.2.0.dev0"
+description = "Measure and improve the energy efficiency of software – with real energy measurements instead of heuristics."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Institute for Digitalization Aachen | FH Aachen University of Applied Sciences | Project GreenCode" },
+]
+keywords = ["energy efficiency", "green software", "profiling", "benchmarking", "llm", "rapl", "code optimization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Benchmark",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "docker>=7.1",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "httpx>=0.27",
+    # Static analysis – existing tools instead of own rules
+    "ruff>=0.6",
+    "radon>=6.0",
+    "vulture>=2.11",
+]
+
+[project.optional-dependencies]
+# Reading METRION live-attribution output (Parquet).
+metrion = ["polars>=1.0"]
+# Platform (`joulecode serve`); `joulecode submit` does not need it.
+server = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+dev = ["pytest>=8", "polars>=1.0", "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+
+[project.scripts]
+joulecode = "joulecode.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["joulecode*"]
+
+[tool.setuptools.package-data]
+# Tools of the language back-ends (helper scripts, linter configuration, Dockerfiles of the tool images)
+"joulecode.lang" = ["php_tools/*", "js_tools/*", "java_tools/*"]
+# Web UI of the platform
+"joulecode.server" = ["static/*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "PERF", "SIM"]
+# Do not wrap long message strings; `ruff format` handles code formatting.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["docker: needs a running Docker daemon"]

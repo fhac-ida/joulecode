@@ -1,0 +1,42 @@
+# joule:code profile for METRION from GitHub (https://github.com/ds-lab/Metrion), back-end "metrion-legacy".
+# Derived from configs/config.yaml (commit 38a7bd5). Changes: absolute DB path,
+# debug off, GPU and network off. scripts/install.sh switches DRAM off if the CPU
+# has no RAPL DRAM domain.
+general:
+  database:
+    type: duckdb
+    path: /var/lib/metrion/monitor.db
+  debug: false
+  collection_interval: 10
+
+energy_model:
+  granularity: detailed
+  components:
+    cpu:
+      mode: include
+      power: auto
+      metrics:
+        - CPU_SOCKET_PKG_ENERGY
+        - CPU_CORE_PID_WORK
+        - CPU_CORE_PID_TIME
+        # - CPU_CORE_PID_UNHALTED_CYCLES
+        # - CPU_CORE_PID_MEM_LOAD_L3_MISS_LOCAL_DRAM
+        # - CPU_CORE_PID_MEM_LOAD_L3_MISS_REMOTE_DRAM
+    dram:
+      mode: include
+      power: auto
+      metrics:
+        - DRAM_SOCKET_TOTAL_ENERGY
+        - DRAM_SOCKET_PID_MEMORY
+    # GTX 1080 (Pascal): nvmlDeviceGetTotalEnergyConsumption only exists from Volta on,
+    # GPU_DEVICE_TOTAL_ENERGY would stay empty. CPU+DRAM is enough for CPU-heavy benchmarks.
+    gpu:
+      mode: exclude
+      power: auto
+      metrics:
+        - GPU_DEVICE_TOTAL_ENERGY
+        - GPU_DEVICE_PID_COMPUTE_UTILIZATION
+    network:
+      mode: exclude
+      power: auto
+      metrics: "*"

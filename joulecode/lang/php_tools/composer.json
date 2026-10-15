@@ -1,0 +1,14 @@
+{
+    "name": "joulecode/php-tools",
+    "description": "PHP tools for joule:code: PHP-Parser, PHPMD, Rector",
+    "license": "MIT",
+    "require": {
+        "php": "^8.1",
+        "nikic/php-parser": "^5.4",
+        "phpmd/phpmd": "^2.15",
+        "rector/rector": "^2.0"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

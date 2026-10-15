@@ -1,0 +1,27 @@
+# METRION with live attribution as a permanent service (only for versions with live_attribution).
+#
+#   sudo cp deploy/metrion/config.live.yaml /etc/joulecode/metrion-live.yaml
+#   sudo cp deploy/metrion/metrion-live.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now metrion-live
+#
+# adjust the paths to your own metrion installation (here: /opt/metrion with a uv venv).
+
+[Unit]
+Description=METRION with live attribution (joule:code back-end metrion-live)
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/metrion
+ExecStartPre=/usr/bin/mkdir -p /var/lib/metrion
+ExecStart=/opt/metrion/.venv/bin/metrion monitor --config /etc/joulecode/metrion-live.yaml
+# metrion shuts down cleanly on SIGINT and writes the last windows while doing so.
+KillSignal=SIGINT
+TimeoutStopSec=15min
+Restart=on-failure
+RestartSec=10
+# results readable for everyone so that joule:code can analyse them without root.
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

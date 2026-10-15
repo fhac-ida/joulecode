@@ -1,0 +1,125 @@
+diff --git a/src/main/java/ledger/Reconciler.java b/src/main/java/ledger/Reconciler.java
+--- a/src/main/java/ledger/Reconciler.java
++++ b/src/main/java/ledger/Reconciler.java
+@@ -53,18 +53,25 @@
+     }
+ 
+     static final String REF_REGEX = "(?i)\\bRE[-\\s]?(\\d{4})[-\\s]?(\\d{1,6})\\b";
++    private static final Pattern REF_PATTERN = Pattern.compile(REF_REGEX);
+     static final BigDecimal SKONTO_PERCENT = new BigDecimal("2");
+     static final int SKONTO_DAYS = 14;
+ 
+     private final List<Invoice> invoices = new ArrayList<>();
++    private final Map<String, Invoice> byNumber = new HashMap<>();
++    private final Map<String, List<Invoice>> byCustomer = new HashMap<>();
+     private final Map<String, String> customerByIban = new HashMap<>();
+ 
+     public Reconciler(List<Invoice> invoices) {
+-        this.invoices.addAll(invoices);
++        for (Invoice inv : invoices) {
++            addInvoice(inv);
++        }
+     }
+ 
+     public void addInvoice(Invoice invoice) {
+         invoices.add(invoice);
++        byNumber.putIfAbsent(invoice.number().toUpperCase(Locale.ROOT), invoice);  // the first one wins
++        byCustomer.computeIfAbsent(invoice.customerId(), k -> new ArrayList<>()).add(invoice);
+     }
+ 
+     public List<Invoice> invoices() {
+@@ -78,26 +85,20 @@
+ 
+     /** Invoice for the number (case-insensitive), with duplicates the one recorded first. */
+     public Invoice findInvoice(String number) {
+-        for (Invoice inv : invoices) {
+-            if (inv.number().equalsIgnoreCase(number)) {
+-                return inv;
+-            }
+-        }
+-        return null;
++        return byNumber.get(number.toUpperCase(Locale.ROOT));
+     }
+ 
+     /** Open invoices of a customer, by due date, then number. */
+     public List<Invoice> openInvoicesOf(String customerId) {
+-        return invoices.stream()
+-                .filter(inv -> inv.customerId().equals(customerId) && !inv.isSettled())
++        return byCustomer.getOrDefault(customerId, List.of()).stream()
++                .filter(inv -> !inv.isSettled())
+                 .sorted(Comparator.comparing(Invoice::due).thenComparing(Invoice::number))
+                 .collect(Collectors.toList());
+     }
+ 
+     /** Invoice numbers from a purpose, normalised, in the order they are mentioned, without duplicates. */
+     public static List<String> extractReferences(String purpose) {
+-        Pattern pattern = Pattern.compile(REF_REGEX);
+-        Matcher m = pattern.matcher(purpose);
++        Matcher m = REF_PATTERN.matcher(purpose);
+         List<String> refs = new ArrayList<>();
+         while (m.find()) {
+             String number = String.format("RE-%s-%05d", m.group(1), Integer.parseInt(m.group(2)));
+diff --git a/src/main/java/ledger/Report.java b/src/main/java/ledger/Report.java
+--- a/src/main/java/ledger/Report.java
++++ b/src/main/java/ledger/Report.java
+@@ -75,26 +75,22 @@
+ 
+     /** Customers with open items, in order of their first occurrence in the invoice list. */
+     public static List<String> customersWithOpenItems(List<Invoice> invoices) {
+-        List<String> customers = new ArrayList<>();
++        java.util.Set<String> customers = new java.util.LinkedHashSet<>();
+         for (Invoice inv : invoices) {
+-            if (!inv.isSettled() && !customers.contains(inv.customerId())) {
++            if (!inv.isSettled()) {
+                 customers.add(inv.customerId());
+             }
+         }
+-        return customers;
++        return new ArrayList<>(customers);
+     }
+ 
+     /** Open amount per customer in the same order. */
+     public static Map<String, BigDecimal> openByCustomer(List<Invoice> invoices) {
+         Map<String, BigDecimal> out = new LinkedHashMap<>();
+-        for (String customer : customersWithOpenItems(invoices)) {
+-            BigDecimal sum = Money.ZERO;
+-            for (Invoice inv : invoices) {
+-                if (inv.customerId().equals(customer) && !inv.isSettled()) {
+-                    sum = sum.add(inv.open());
+-                }
++        for (Invoice inv : invoices) {
++            if (!inv.isSettled()) {
++                out.merge(inv.customerId(), inv.open(), BigDecimal::add);
+             }
+-            out.put(customer, sum);
+         }
+         return out;
+     }
+diff --git a/src/main/java/ledger/Statement.java b/src/main/java/ledger/Statement.java
+--- a/src/main/java/ledger/Statement.java
++++ b/src/main/java/ledger/Statement.java
+@@ -59,16 +59,17 @@
+ 
+     /** Statement as text with fixed column widths. */
+     public String render() {
+-        String out = "Account statement " + account.owner() + " – " + Iban.format(account.iban()) + "\n";
+-        out += String.format("%-10s %-12s %-24s %-40s %14s %14s%n", "Date", "Transaction", "Counterparty", "Purpose", "Amount", "Balance");
+-        out += String.format("%-10s %-12s %-24s %-40s %14s %14s%n", "", "", "", "Opening balance", "", Money.format(opening));
++        String row = "%-10s %-12s %-24s %-40s %14s %14s%n";
++        StringBuilder out = new StringBuilder("Account statement " + account.owner() + " – " + Iban.format(account.iban()) + "\n");
++        out.append(String.format(row, "Date", "Transaction", "Counterparty", "Purpose", "Amount", "Balance"));
++        out.append(String.format(row, "", "", "", "Opening balance", "", Money.format(opening)));
+         for (Line l : lines) {
+-            out += String.format("%-10s %-12s %-24s %-40s %14s %14s%n", l.date(), l.id(),
++            out.append(String.format(row, l.date(), l.id(),
+                     shorten(l.counterparty() == null ? "" : l.counterparty(), 24), l.purpose(),
+-                    Money.format(l.amount()), Money.format(l.balance()));
++                    Money.format(l.amount()), Money.format(l.balance())));
+         }
+-        out += String.format("%-10s %-12s %-24s %-40s %14s %14s%n", "", "", "", "Closing balance", "", Money.format(closing()));
+-        return out;
++        out.append(String.format(row, "", "", "", "Closing balance", "", Money.format(closing())));
++        return out.toString();
+     }
+ 
+     /** Statement as CSV (semicolon, German amounts). */

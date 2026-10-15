@@ -1,0 +1,44 @@
+version: 1
+language: java
+
+# Long example (~1,150 lines in 13 classes): batch payment reconciliation. Hotspots hide in a lot
+# of unremarkable code, one of them in a file with > 400 lines (Reconciler.java).
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: java -jar /opt/junit/junit.jar execute --class-path out/main:out/test --scan-class-path --disable-banner --details=summary
+  timeout_s: 120
+
+benchmark:
+  command: java -cp out/main:out/bench Run
+  timeout_s: 900
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "32"    # calibrated on the measuring host (suite.py check): >= 20 s per run
+
+limits:
+  cpus: 1.0
+  memory: 1g
+
+measurement:
+  repetitions: 10
+  min_repetitions: 5
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+profile:
+  env:
+    BENCH_ROUNDS: "3"
+
+protected_paths: [src/test, bench, joulecode.yml, Dockerfile]
+
+optimize:
+  hotspots: 3
+  candidates_per_hotspot: 2
+  repair_attempts: 2
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

@@ -1,0 +1,125 @@
+diff --git a/src/Catalog.php b/src/Catalog.php
+--- a/src/Catalog.php
++++ b/src/Catalog.php
+@@ -18,6 +18,9 @@
+     /** @var list<Product> */
+     private array $products = [];
+ 
++    /** @var array<string, Product> item number → first item with this number */
++    private array $bySku = [];
++
+     /** @var array<string, string> category path → display name */
+     private array $categoryNames = [];
+ 
+@@ -36,6 +39,9 @@
+     public function add(Product $product): void
+     {
+         $this->products[] = $product;
++        if (!isset($this->bySku[$product->sku])) {
++            $this->bySku[$product->sku] = $product;
++        }
+     }
+ 
+     public function count(): int
+@@ -54,12 +60,7 @@
+      */
+     public function findBySku(string $sku): ?Product
+     {
+-        foreach ($this->products as $product) {
+-            if ($product->sku === $sku) {
+-                return $product;
+-            }
+-        }
+-        return null;
++        return $this->bySku[$sku] ?? null;
+     }
+ 
+     public function require(string $sku): Product
+@@ -79,6 +80,7 @@
+         foreach ($this->products as $i => $product) {
+             if ($product->sku === $sku) {
+                 $this->products[$i] = $product->withStock($stock);
++                $this->bySku[$sku] = $this->products[$i];
+                 return;
+             }
+         }
+@@ -268,19 +270,15 @@
+      */
+     public static function facetCounts(array $products): array
+     {
+-        $all = [];
++        $counts = [];
+         foreach ($products as $product) {
+-            $all = array_merge($all, $product->tags);
++            foreach ($product->tags as $tag) {
++                $counts[$tag] = ($counts[$tag] ?? 0) + 1;
++            }
+         }
+         $pairs = [];
+-        foreach (array_unique($all) as $tag) {
+-            $n = 0;
+-            foreach ($all as $other) {
+-                if ($other === $tag) {
+-                    $n++;
+-                }
+-            }
+-            $pairs[] = [(string) $tag, $n];
++        foreach ($counts as $tag => $n) {
++            $pairs[] = [(string) $tag, $n];  // numeric words become int when used as keys
+         }
+         usort($pairs, static fn (array $a, array $b): int => [$b[1], $a[0]] <=> [$a[1], $b[0]]);
+         return $pairs;
+diff --git a/src/Export.php b/src/Export.php
+--- a/src/Export.php
++++ b/src/Export.php
+@@ -83,9 +83,17 @@
+      */
+     public function topSellers(int $limit = 10): array
+     {
++        $revenue = [];
++        $units = [];
++        foreach ($this->orders as $order) {
++            foreach ($order->lines as $line) {
++                $revenue[$line->sku] = ($revenue[$line->sku] ?? 0) + $line->grossCents();
++                $units[$line->sku] = ($units[$line->sku] ?? 0) + $line->quantity;
++            }
++        }
+         $skus = $this->soldSkus();
+-        usort($skus, function (string $a, string $b): int {
+-            $diff = $this->revenueOf($b) <=> $this->revenueOf($a);
++        usort($skus, static function (string $a, string $b) use ($revenue): int {
++            $diff = $revenue[$b] <=> $revenue[$a];
+             return $diff !== 0 ? $diff : strcmp($a, $b);
+         });
+         $out = [];
+@@ -93,8 +101,8 @@
+             $out[] = [
+                 'sku' => $sku,
+                 'name' => $this->catalog->findBySku($sku)?->name ?? '?',
+-                'revenue' => $this->revenueOf($sku),
+-                'units' => $this->unitsOf($sku),
++                'revenue' => $revenue[$sku],
++                'units' => $units[$sku],
+             ];
+         }
+         return $out;
+diff --git a/src/Pricing.php b/src/Pricing.php
+--- a/src/Pricing.php
++++ b/src/Pricing.php
+@@ -50,6 +50,7 @@
+             throw new \InvalidArgumentException("Unknown rule type {$rule['type']}");
+         }
+         $rule['seq'] = count($this->rules);
++        $rule['skuSet'] = array_fill_keys($rule['skus'], true);
+         $this->rules[] = $rule;
+         usort($this->rules, static fn (array $a, array $b): int => [$b['priority'], $a['seq']] <=> [$a['priority'], $b['seq']]);
+     }
+@@ -75,7 +76,7 @@
+             if ($rule['groups'] !== [] && ($customer === null || !in_array($customer->group, $rule['groups'], true))) {
+                 continue;
+             }
+-            $bySku = $rule['skus'] !== [] && in_array($product->sku, $rule['skus'], true);
++            $bySku = isset($rule['skuSet'][$product->sku]);
+             $byCategory = $rule['category'] !== null && Catalog::isInCategory($product->category, $rule['category']);
+             $global = $rule['skus'] === [] && $rule['category'] === null;
+             if ($bySku || $byCategory || $global) {

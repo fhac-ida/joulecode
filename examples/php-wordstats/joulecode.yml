@@ -1,0 +1,45 @@
+version: 1
+language: php
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: vendor/bin/phpunit --do-not-cache-result tests
+  timeout_s: 120
+
+benchmark:
+  command: php bench/run.php
+  timeout_s: 900
+  # On the measuring host: choose the load so that one run takes >= 20 s.
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "55"     # measuring host: original ~21 s (40 rounds gave 15.6 s)
+
+limits:
+  cpus: 1.0
+  memory: 512m
+  # cpuset: "2"   # on the measuring host, pin to a fixed core
+
+measurement:
+  repetitions: 10
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+# Profiling run to find hotspots. joule:code builds an image derived from the original
+# with Xdebug for it (measured images stay without Xdebug).
+profile:
+  env:
+    BENCH_ROUNDS: "3"     # Xdebug slows things down a lot – little load is enough for the profile
+
+# Candidates must not change dependencies.
+protected_paths: [tests, bench, joulecode.yml, composer.json, composer.lock]
+
+optimize:
+  hotspots: 2
+  candidates_per_hotspot: 2
+  repair_attempts: 2      # small models often need two attempts for PHP return formats
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

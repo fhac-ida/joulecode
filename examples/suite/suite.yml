@@ -1,0 +1,169 @@
+# Test suite for joule:code: which examples run and what is expected of each.
+# Paths are relative to this file. Run: python scripts/suite.py --help
+#
+# expect:
+#   improvement     at least one candidate (or the combination) is significantly better
+#                   and saves at least min_gain (fraction, 0.10 = 10%)
+#   no_improvement  no candidate saves significantly more than tolerance (default 0.05);
+#                   “no hotspots” or “no candidates” also counts as met
+#   no_hotspots     the pipeline should already stop at profiling (status no_hotspots)
+#
+# hotspots:   functions (qualified names) that profiling should find.
+#             The evaluation reports how many of them were found; it is not a condition.
+# holdout:    tests that joule:code does not see. Every candidate that passed the test gate
+#             must pass them as well – otherwise the gate let a change in behaviour
+#             through (“gate gap”). A significantly better candidate with a gate gap
+#             makes the example fail.
+# reference:  hand optimisation as a patch. `check` checks it, `run --reference` measures it,
+#             so that you can see how much of the possible saving joule:code achieves.
+# holdout_dir / holdout_command: where the holdout tests go in the copy and how they
+#             run (default: _holdout/ with pytest). Required for PHP, JavaScript and Java.
+
+examples:
+  - name: python-wordstats
+    repo: ../python-wordstats
+    category: positive
+    description: list membership, nested counting loop, string concatenation
+    expect: improvement
+    min_gain: 0.30
+    hotspots: [frequent_words, unique_words]
+    holdout: holdout/python-wordstats
+    reference: ../python-wordstats-optimized.patch
+
+  - name: python-graphroute
+    repo: ../python-graphroute
+    category: positive
+    description: class methods; neighbour search over all edges, breadth-first search with lists.
+      Trap – a cache on neighbors/shortest_path becomes stale after add_edge.
+    expect: improvement
+    min_gain: 0.30
+    hotspots: [Network.neighbors, Network.shortest_path, Network.add_edge]
+    holdout: holdout/python-graphroute
+    reference: reference/python-graphroute.patch
+
+  - name: python-logstats
+    repo: ../python-logstats
+    category: positive
+    description: several modules. The hotspot by self time (Request.endpoint) is not
+      the cause – endpoint_stats calls it far too often. Trap – percentile definition,
+      sorting the input in place.
+    expect: improvement
+    min_gain: 0.20
+    hotspots: [Request.endpoint, endpoint_stats]
+    holdout: holdout/python-logstats
+    reference: reference/python-logstats.patch
+
+  - name: python-sigproc
+    repo: ../python-sigproc
+    category: positive
+    description: numpy arrays in Python loops; vectorisation, floating-point tolerance,
+      numpy already is a dependency (no rule veto)
+    expect: improvement
+    min_gain: 0.50
+    hotspots: [moving_average, pairwise_distances]
+    holdout: holdout/python-sigproc
+    reference: reference/python-sigproc.patch
+
+  - name: python-editdist
+    repo: ../python-editdist
+    category: positive
+    description: recursion without memoisation (exponential)
+    expect: improvement
+    min_gain: 0.50
+    hotspots: [levenshtein]
+    holdout: holdout/python-editdist
+    reference: reference/python-editdist.patch
+
+  - name: python-textclean
+    repo: ../python-textclean
+    category: traps
+    description: obvious optimisations change the behaviour (order, ties,
+      lower/casefold, empty input, modifying the input). Also a hidden hotspot –
+      word_counts spends its time in list.count, which escapes the self-time selection.
+    expect: improvement
+    min_gain: 0.10
+    hotspots: [dedupe, top_scores, word_counts]
+    holdout: holdout/python-textclean
+    reference: reference/python-textclean.patch
+
+  - name: python-checksum
+    repo: ../python-checksum
+    category: negative-control
+    description: already efficient, the work happens in hashlib/zlib/sorted. A “better”
+      with a noteworthy saving would be a false alarm of the measurement or the test gate.
+    expect: no_improvement
+    tolerance: 0.05
+    holdout: holdout/python-checksum
+
+  - name: python-iowait
+    repo: ../python-iowait
+    category: special-case
+    description: run time consists almost only of waiting (sleep); no hotspots expected
+    expect: no_hotspots
+
+  # -- Long examples (~1,150–1,450 lines of source code, one domain per language) ---------------
+  # Check whether joule:code finds and optimises the hotspots in a lot of unremarkable code. One
+  # hotspot each lies in a file with > 400 lines – there the optimiser does not get the whole
+  # file, only the function (MAX_CONTEXT_LINES in joulecode/agents.py).
+
+  - name: python-fleetlog
+    repo: ../python-fleetlog
+    category: long
+    description: Python, fleet telematics (8 modules). Duplicate GPS reports removed via a list
+      (trips.py, > 400 lines); linear vehicle lookup; fuel level search per trip over all
+      reports – the cause lies in the caller fuel_report. Traps – the first report wins, the order
+      is kept, with equal timestamps the first fuel level report counts (bisect would take the last one),
+      duplicate vehicle IDs.
+    expect: improvement
+    min_gain: 0.30
+    hotspots: [dedupe_points, _level_before, _level_after, FleetIndex.vehicle]
+    holdout: holdout/python-fleetlog
+    reference: reference/python-fleetlog.patch
+
+  - name: php-shopcore
+    repo: ../php-shopcore
+    category: long
+    description: PHP, web shop back-end (13 classes). Best-seller sorting recomputes revenue in
+      every comparison; price rules with in_array over large item lists; facets with
+      array_merge in the loop; linear item lookup (Catalog.php, > 400 lines). Traps –
+      numeric item numbers and tags become int as array keys (“100” vs. “0100”,
+      strcmp on ties), an index must be kept up to date in add/updateStock.
+    expect: improvement
+    min_gain: 0.30
+    hotspots: [Export::topSellers, Export::revenueOf, Pricing::rulesFor, Pricing::priceCart, Catalog::facetCounts, Catalog::findBySku]
+    holdout: holdout/php-shopcore
+    holdout_dir: _holdout
+    holdout_command: vendor/bin/phpunit --do-not-cache-result _holdout
+    reference: reference/php-shopcore.patch
+
+  - name: js-helpdesk
+    repo: ../js-helpdesk
+    category: long
+    description: JavaScript (Node), helpdesk/ticket system (10 modules, tickets.js > 400 lines).
+      SLA deadlines are counted minute by minute, with date formatting and a holiday lookup per
+      minute; agent load recomputed via object spread in reduce for every ticket. Traps – a deadline
+      ends exactly at closing time (the same day), seconds offset, holidays, numeric
+      agent IDs (“10” before “9” as text, object keys sort differently).
+    expect: improvement
+    min_gain: 0.30
+    hotspots: [isoDate, isBusinessMinute, addBusinessMinutes, agentLoad]
+    holdout: holdout/js-helpdesk
+    holdout_dir: _holdout
+    holdout_command: node --test _holdout/*.test.js
+    reference: reference/js-helpdesk.patch
+
+  - name: java-ledger
+    repo: ../java-ledger
+    category: long
+    description: Java, payment reconciliation as a batch job (13 classes, BigDecimal). Linear invoice lookup
+      with equalsIgnoreCase (Reconciler.java, > 400 lines); open invoices per customer via a stream
+      over all invoices; regex recompiled per transaction; open items per customer with
+      List.contains; account statement with String += in the loop. Traps – case-insensitive
+      numbers, the first invoice wins, invoices added later, orders.
+    expect: improvement
+    min_gain: 0.30
+    hotspots: [Reconciler.findInvoice, Reconciler.openInvoicesOf, Report.openByCustomer, Reconciler.extractReferences]
+    holdout: holdout/java-ledger
+    holdout_dir: src/test/java/holdout
+    holdout_command: java -jar /opt/junit/junit.jar execute --class-path out/main:out/test --select-package holdout --disable-banner --details=summary
+    reference: reference/java-ledger.patch

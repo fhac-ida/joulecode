@@ -1,0 +1,78 @@
+diff --git a/src/graphroute/network.py b/src/graphroute/network.py
+--- a/src/graphroute/network.py
++++ b/src/graphroute/network.py
+@@ -1,26 +1,29 @@
+ """Undirected graph with breadth-first search (original variant with typical inefficiencies)."""
+ 
++from collections import deque
++
+ 
+ class Network:
+     """Undirected graph; nodes are arbitrary hashable values."""
+ 
+     def __init__(self) -> None:
+         self.edges: list[tuple] = []
++        self._edge_set: set[tuple] = set()
++        self._adjacent: dict = {}
+ 
+     def add_edge(self, a, b) -> None:
+         """Add an undirected edge (duplicate edges are ignored)."""
+-        if (a, b) not in self.edges and (b, a) not in self.edges:
+-            self.edges.append((a, b))
++        if (a, b) in self._edge_set or (b, a) in self._edge_set:
++            return
++        self.edges.append((a, b))
++        self._edge_set.add((a, b))
++        self._adjacent.setdefault(a, []).append(b)
++        if a != b:
++            self._adjacent.setdefault(b, []).append(a)
+ 
+     def neighbors(self, node) -> list:
+         """Neighbours of `node` in the order in which the edges were added."""
+-        result = []
+-        for a, b in self.edges:  # searches all edges on every call: O(E)
+-            if a == node:
+-                result.append(b)
+-            elif b == node:
+-                result.append(a)
+-        return result
++        return list(self._adjacent.get(node, ()))
+ 
+     def shortest_path(self, start, goal) -> list | None:
+         """A shortest path from `start` to `goal` (including both), otherwise None.
+@@ -30,14 +33,12 @@
+         """
+         if start == goal:
+             return [start]
+-        queue = [start]
+-        visited = [start]
+-        parent = {}
++        queue = deque([start])
++        parent = {start: None}
+         while queue:
+-            node = queue.pop(0)  # O(n) for lists
+-            for nxt in self.neighbors(node):
+-                if nxt not in visited:  # membership check on a list
+-                    visited.append(nxt)
++            node = queue.popleft()
++            for nxt in self._adjacent.get(node, ()):
++                if nxt not in parent:
+                     parent[nxt] = node
+                     if nxt == goal:
+                         path = [goal]
+@@ -49,13 +50,8 @@
+ 
+     def degree_histogram(self) -> dict[int, int]:
+         """Number of nodes per degree."""
+-        nodes = []
+-        for a, b in self.edges:
+-            for n in (a, b):
+-                if n not in nodes:
+-                    nodes.append(n)
+         hist: dict[int, int] = {}
+-        for n in nodes:
+-            d = len(self.neighbors(n))
++        for neighbors in self._adjacent.values():
++            d = len(neighbors)
+             hist[d] = hist.get(d, 0) + 1
+         return dict(sorted(hist.items()))

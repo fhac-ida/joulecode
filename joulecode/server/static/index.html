@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>joule:code</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%230ca30c'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/"><i></i>joule:code</a>
+      <nav>
+        <a href="#/" data-nav="projects">Projects</a>
+        <a href="#/queue" data-nav="queue">Queue <span id="queue-count" class="count" hidden></span></a>
+        <a href="#/settings" data-nav="settings">Access</a>
+      </nav>
+      <span id="health" class="health" title="Server status"></span>
+    </div>
+  </header>
+  <main id="view" aria-live="polite"></main>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

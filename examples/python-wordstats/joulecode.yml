@@ -1,0 +1,42 @@
+version: 1
+language: python
+
+build:
+  dockerfile: Dockerfile
+
+test:
+  command: pytest -q -p no:cacheprovider tests
+  timeout_s: 120
+
+benchmark:
+  command: python bench/run.py
+  timeout_s: 900
+  # On the measuring host: choose the load so that one run takes >= 20 s.
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "40"
+
+limits:
+  cpus: 1.0
+  memory: 512m
+  # cpuset: "2"   # on the measuring host, pin to a fixed core
+
+measurement:
+  repetitions: 10
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+# Profiling run to find hotspots (cProfile is applied automatically)
+profile:
+  env:
+    BENCH_ROUNDS: "5"     # less load is enough for the profile
+
+# Optimisation (agents)
+optimize:
+  hotspots: 2
+  candidates_per_hotspot: 2
+  repair_attempts: 1
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true

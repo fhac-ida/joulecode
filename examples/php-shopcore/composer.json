@@ -1,0 +1,22 @@
+{
+    "name": "joulecode/php-shopcore",
+    "description": "joule:code example with a lot of code: web shop back-end (catalogue, prices, checkout, inventory, export)",
+    "license": "MIT",
+    "type": "project",
+    "require": {
+        "php": "^8.2",
+        "ext-mbstring": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload": {
+        "psr-4": { "ShopCore\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "ShopCore\\Tests\\": "tests/" }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

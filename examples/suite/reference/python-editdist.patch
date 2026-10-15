@@ -1,0 +1,41 @@
+diff --git a/src/editdist/core.py b/src/editdist/core.py
+--- a/src/editdist/core.py
++++ b/src/editdist/core.py
+@@ -3,16 +3,13 @@
+ 
+ def levenshtein(a: str, b: str) -> int:
+     """Minimum number of insertions, deletions and substitutions that turn a into b."""
+-    if not a:
+-        return len(b)
+-    if not b:
+-        return len(a)
+-    cost = 0 if a[-1] == b[-1] else 1
+-    return min(
+-        levenshtein(a[:-1], b) + 1,
+-        levenshtein(a, b[:-1]) + 1,
+-        levenshtein(a[:-1], b[:-1]) + cost,
+-    )
++    previous = list(range(len(b) + 1))
++    for i, ca in enumerate(a, 1):
++        current = [i]
++        for j, cb in enumerate(b, 1):
++            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
++        previous = current
++    return previous[-1]
+ 
+ 
+ def closest(word: str, vocabulary: list[str]) -> str:
+@@ -29,9 +26,11 @@
+ def suggestions(word: str, vocabulary: list[str], max_distance: int = 2) -> list[str]:
+     """All words with distance <= max_distance, by distance, then by vocabulary order."""
+     scored = []
+-    for candidate in vocabulary:
++    first_index: dict[str, int] = {}
++    for i, candidate in enumerate(vocabulary):
++        first_index.setdefault(candidate, i)
+         d = levenshtein(word, candidate)
+         if d <= max_distance:
+-            scored.append((d, vocabulary.index(candidate), candidate))
++            scored.append((d, first_index[candidate], candidate))
+     scored.sort()
+     return [c for _, _, c in scored]

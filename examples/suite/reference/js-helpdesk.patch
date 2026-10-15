@@ -1,0 +1,114 @@
+diff --git a/src/routing.js b/src/routing.js
+--- a/src/routing.js
++++ b/src/routing.js
+@@ -11,10 +11,12 @@
+ 
+ /** Open tickets per agent ID. */
+ export function agentLoad(agents, tickets) {
+-  return agents.reduce(
+-    (acc, a) => ({ ...acc, [a.id]: tickets.filter((t) => t.assignee === a.id && isOpen(t)).length }),
+-    {},
+-  );
++  const load = {};
++  for (const a of agents) load[a.id] = 0;
++  for (const t of tickets) {
++    if (t.assignee !== null && t.assignee in load && isOpen(t)) load[t.assignee]++;
++  }
++  return load;
+ }
+ 
+ export function canHandle(agent, ticket) {
+@@ -35,14 +37,15 @@
+  */
+ export function autoAssign(tickets, agents, at) {
+   const assigned = [];
++  const load = agentLoad(agents, tickets);
+   for (const ticket of assignmentOrder(tickets)) {
+-    const load = agentLoad(agents, tickets);
+     const eligible = agents
+       .filter((a) => canHandle(a, ticket) && load[a.id] < (a.maxOpen ?? Infinity))
+       .sort((a, b) => load[a.id] - load[b.id] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+     if (eligible.length === 0) continue;
+     ticket.assignee = eligible[0].id;
+     ticket.updatedAt = at;
++    load[eligible[0].id]++;
+     assigned.push([ticket.id, eligible[0].id]);
+   }
+   return assigned;
+diff --git a/src/sla.js b/src/sla.js
+--- a/src/sla.js
++++ b/src/sla.js
+@@ -28,8 +28,38 @@
+   return new Date(t).toISOString().slice(0, 10);
+ }
+ 
++// Holidays as a set per calendar and holiday list (rebuilt when the list changes).
++const holidaySets = new WeakMap();
++
++function holidaySet(calendar) {
++  const cached = holidaySets.get(calendar);
++  if (cached && cached.list === calendar.holidays && cached.size === calendar.holidays.length) {
++    return cached.set;
++  }
++  const set = new Set(calendar.holidays);
++  holidaySets.set(calendar, { list: calendar.holidays, size: calendar.holidays.length, set });
++  return set;
++}
++
+ export function isHoliday(t, calendar = DEFAULT_CALENDAR) {
+-  return calendar.holidays.includes(isoDate(t));
++  return holidaySet(calendar).has(isoDate(t));
++}
++
++/**
++ * How many minutes from `t` on (same seconds offset) are business time in a row (> 0)
++ * or not business time in a row (< 0, at most until the end of the day)? Basis for the jumps below.
++ */
++function runAt(t, calendar) {
++  const d = new Date(t);
++  const minuteOfDay = d.getUTCHours() * 60 + d.getUTCMinutes();
++  const span = calendar.hours[d.getUTCDay()];
++  if (!span || holidaySet(calendar).has(isoDate(t)) || minuteOfDay >= span[1]) {
++    return -(1440 - minuteOfDay);
++  }
++  if (minuteOfDay < span[0]) {
++    return -(span[0] - minuteOfDay);
++  }
++  return span[1] - minuteOfDay;
+ }
+ 
+ /** Does the start of the minute `t` lie within business hours? */
+@@ -54,10 +84,12 @@
+   let t = start;
+   let left = minutes;
+   while (left > 0) {
+-    if (isBusinessMinute(t, calendar)) {
+-      left--;
++    const run = runAt(t, calendar);
++    const step = run > 0 ? Math.min(run, left) : -run;
++    if (run > 0) {
++      left -= step;
+     }
+-    t += MINUTE;
++    t += step * MINUTE;
+   }
+   return t;
+ }
+@@ -68,10 +100,14 @@
+     return 0;
+   }
+   let count = 0;
+-  for (let t = a; t < b; t += MINUTE) {
+-    if (isBusinessMinute(t, calendar)) {
+-      count++;
++  let t = a;
++  while (t < b) {
++    const run = runAt(t, calendar);
++    const step = Math.min(Math.abs(run), Math.ceil((b - t) / MINUTE));
++    if (run > 0) {
++      count += step;
+     }
++    t += step * MINUTE;
+   }
+   return count;
+ }

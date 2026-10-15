@@ -1,0 +1,136 @@
+# joule:code profile for METRION with live attribution (back-end metrion-live) – only for versions with live_attribution.
+# Changes: parquet sink, live attribution on, absolute paths, GPU/network off.
+#
+# METRION agent configuration.
+#
+# Unknown keys are rejected, so a typo stops the agent at startup instead of silently leaving
+# the default in place. All durations are in seconds.
+
+# Log at DEBUG level.
+debug: false
+
+# Where the collected data is written.
+storage:
+  # duckdb, sqlite or parquet.
+  #   duckdb  - what the SQL analyses under metrion/energy_attribution/ expect. path is a file.
+  #   parquet - append-only files, cheapest during the run. path is a directory, and
+  #             `metrion analyze --db-path <that directory>` builds the database it needs.
+  type: parquet
+  # A relative path is resolved against the repository root. Every run gets a timestamp
+  # appended, so ./monitor.db becomes ./monitor_2026_09_08_10_15_00.db and no run can
+  # overwrite another. The path in use is logged at startup.
+  path: /var/lib/metrion/raw
+  # Keep the measurements themselves. Off writes only the result stream of the live attribution,
+  # which is smaller by orders of magnitude - but the run can then never be attributed again with
+  # another model. Off requires live_attribution.enabled, otherwise the agent refuses to start.
+  store_raw_measurements: true
+
+# How often things happen. Every value here is one waiting step between an event in the kernel
+# and the moment its energy is attributed - change when latency matters.
+timing:
+  # The agent's main loop: how often it collects what the data sources have collected, and hands them to storage.
+  # Raising it batches more per round trip; lowering it shortens the delay until a measurement is on disk.
+  cycle: 10
+
+  # The eBPF producers (sched_switch, tcp_monitor) collect kernel events into a buffer and hand
+  # it on in batches. This is how long a buffered event waits before it is handed on. Nothing is
+  # lost by raising it - the kernel probe keeps recording either way, the batch just gets bigger.
+  ebpf_flush: 1.0
+
+  # How long a writer holds finished rows before it writes them to a file. Applies to both
+  # writers: the one inside each eBPF producer and the one in the agent that feeds storage.
+  # Lowering it gets data onto disk sooner, in more and smaller files.
+  storage_flush: 2.0
+
+  # How often each data source is collected. One entry per source, not per metric: a source is
+  # collected as a whole, so all of its metrics share one interval.
+  #
+  # Which sources run at all is decided by energy_model.components[*].metrics below, not here.
+  # The two are keyed differently on purpose: RAPLCPU serves both the cpu and the dram
+  # component, and cpu is served by RAPLCPU and SchedSwitchMonitor together.
+  sources:
+    # Polled sources: every read produces one measurement, so this is the sample rate.
+
+    # Reads the RAPL energy counters for CPU package and DRAM. This value also defines the grid
+    # that per-process CPU work is bucketed into, so it is recommended to stay at or above 0.25 s: below
+    # that, the guard band at both ends of an interval leaves no usable window in the middle.
+    rapl: 1.0
+    # Queries NVML for GPU device energy and per-process GPU utilization.
+    nvml: 1.0
+    # Parses /proc/<pid>/numa_maps for the per-NUMA memory footprint of each process. Expensive
+    # and slow-moving, hence the larger interval.
+    proc_numa: 5.0
+
+    # eBPF sources: the kernel probe records every event continuously and a separate producer
+    # process buffers them. The value below is only how often the agent picks up what has
+    # already been buffered, so raising it costs freshness, never events.
+
+    # Scheduler events, from which per-process CPU time is derived.
+    sched_switch: 5.0
+    # Socket events, from which per-process network traffic is derived.
+    tcp_monitor: 5.0
+
+# The eBPF probes in the kernel.
+ebpf:
+  # Size of the ring buffer that carries every context switch from the kernel to the agent, in
+  # MiB, a power of two. The kernel pins it in memory for the whole run. 256 MiB hold about four
+  # seconds of 200 000 switches per second; 32 MiB already lost events on a busy 32-thread server.
+  # Raise it when the log warns about a ring buffer overflow, lower it on a small machine.
+  ringbuf_mib: 256
+
+# Attribute energy while the agent runs and write one row per time window and thread, with the
+# thread's name, cmdline and cgroup, into its own Parquet directory. Off, the attribution runs
+# afterwards with `metrion analyze`.
+live_attribution:
+  enabled: true
+  # How late a measurement may arrive and still count, and so how long a window waits before it
+  # is written. Must cover the waiting steps in timing (ebpf_flush + 2 x storage_flush + the
+  # slowest source + cycle), otherwise the agent refuses to start.
+  cutoff: 30
+  # Length of one row of the result stream. At least the slowest energy source (rapl, nvml);
+  # longer windows split fewer energy intervals and are more exact.
+  window: 10
+  # A relative path is resolved against the repository root and gets the run's timestamp, like
+  # storage.path.
+  path: /var/lib/metrion/energy
+
+# What is measured. One entry per hardware component; valid names are cpu, gpu, dram, network
+# and host.
+energy_model:
+  # detailed keeps per-process rows, compressed aggregates them.
+  granularity: detailed
+  components:
+    cpu:
+      # include or exclude - exclude skips the component entirely.
+      mode: include
+      # auto detects idle and maximum power from the hardware. Alternatively a list of
+      # subcomponents with explicit idle_power and max_power values.
+      power: auto
+      # The metrics to collect, or "*" for every metric this component has.
+      metrics:
+        - CPU_SOCKET_PKG_ENERGY
+        - CPU_CORE_PID_WORK
+        - CPU_CORE_PID_TIME
+        # - CPU_CORE_PID_UNHALTED_CYCLES
+        # - CPU_CORE_PID_MEM_LOAD_L3_MISS_LOCAL_DRAM
+        # - CPU_CORE_PID_MEM_LOAD_L3_MISS_REMOTE_DRAM
+    dram:
+      mode: include
+      power: auto
+      metrics:
+        - DRAM_SOCKET_TOTAL_ENERGY
+        - DRAM_SOCKET_PID_MEMORY
+    # GTX 1080 (Pascal): nvmlDeviceGetTotalEnergyConsumption only exists from Volta on,
+    # GPU_DEVICE_TOTAL_ENERGY stays empty there. For CPU-heavy Python benchmarks
+    # CPU+DRAM is enough; only switch the GPU on when GPU workloads are measured
+    # and the attribution with power values (POWER_INSTANT) has been checked.
+    gpu:
+      mode: exclude
+      power: auto
+      metrics:
+        - GPU_DEVICE_TOTAL_ENERGY
+        - GPU_DEVICE_PID_COMPUTE_UTILIZATION
+    network:
+      mode: exclude
+      power: auto
+      metrics: "*"

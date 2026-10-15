@@ -1,0 +1,71 @@
+# Automatische Versionierung: jeder Merge/Push auf main erzeugt Tag vX.Y.Z + GitHub-Release.
+#
+# Bump-Regel (aus der Commit-/Merge-Message):
+#   "#major" oder "BREAKING CHANGE"        -> X+1.0.0
+#   "#minor" oder Zeile beginnt mit "feat" -> X.Y+1.0
+#   sonst                                  -> X.Y.Z+1
+#   "#skip-release"                        -> kein Release
+# Erster Tag ohne Vorgänger: Version aus pyproject.toml (ohne .devN), also v0.2.0.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: ${{ !contains(github.event.head_commit.message, '#skip-release') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version bestimmen
+        id: version
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -eu
+          LAST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$LAST" ]; then
+            BASE=$(sed -n 's/^version *= *"\([0-9]*\.[0-9]*\.[0-9]*\).*"/\1/p' pyproject.toml | head -n1)
+            NEW="v${BASE:-0.1.0}"
+          else
+            V=${LAST#v}; MA=${V%%.*}; R=${V#*.}; MI=${R%%.*}; PA=${R#*.}
+            if printf '%s' "$MSG" | grep -qiE '#major|BREAKING CHANGE'; then MA=$((MA+1)); MI=0; PA=0
+            elif printf '%s' "$MSG" | grep -qiE '#minor|^feat'; then MI=$((MI+1)); PA=0
+            else PA=$((PA+1)); fi
+            NEW="v$MA.$MI.$PA"
+          fi
+          echo "Letzter Tag: ${LAST:-keiner} -> neuer Tag: $NEW"
+          echo "last=$LAST" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW"   >> "$GITHUB_OUTPUT"
+
+      - name: Tag und Release erstellen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW: ${{ steps.version.outputs.new }}
+          LAST: ${{ steps.version.outputs.last }}
+        run: |
+          set -eu
+          if git rev-parse -q --verify "refs/tags/$NEW" >/dev/null; then
+            echo "Tag $NEW existiert bereits."; exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW" -m "Release $NEW"
+          git push origin "$NEW"
+          if [ -n "$LAST" ]; then
+            gh release create "$NEW" --title "$NEW" --generate-notes --notes-start-tag "$LAST"
+          else
+            gh release create "$NEW" --title "$NEW" --generate-notes
+          fi

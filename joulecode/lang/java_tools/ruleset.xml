@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!-- PMD rules for joule:code: efficiency findings for the optimiser (like Ruff for Python)
+     and unused code as dead code. No style rules. -->
+<ruleset name="joulecode"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+  <description>joule:code</description>
+
+  <rule ref="category/java/performance.xml">
+    <!-- too general or unrelated to energy consumption -->
+    <exclude name="AvoidInstantiatingObjectsInLoops"/>
+    <exclude name="RedundantFieldInitializer"/>
+  </rule>
+
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+</ruleset>

@@ -1,0 +1,35 @@
+version: 1
+language: python
+
+test:
+  command: pytest -q -p no:cacheprovider tests
+  timeout_s: 120
+
+benchmark:
+  command: python bench/run.py
+  timeout_s: 900
+  min_duration_s: 20
+  env:
+    BENCH_ROUNDS: "42"   # on the measuring host, choose so that one run takes >= 20 s
+
+limits:
+  cpus: 1.0
+  memory: 512m
+
+measurement:
+  repetitions: 10
+  warmup: 1
+  cooldown_s: 5
+  seed: 42
+
+profile:
+  env:
+    BENCH_ROUNDS: "3"
+
+optimize:
+  hotspots: 2
+  candidates_per_hotspot: 2
+  repair_attempts: 1
+  review_rounds: 1
+  max_complexity_increase: 3
+  combine: true
