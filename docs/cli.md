@@ -167,6 +167,7 @@ Exit codes: `0` passed or no condition set, `1` gate failed, `2` error.
 
 | Script | |
 |---|---|
+| `scripts/tour.sh` | guided tour: runs every feature on the examples and explains the output (`all`, a recipe number, `--yes` for CI; `8 PATH` checks your repository) |
 | `scripts/install.sh` | set up a measuring host, see [installation.md](installation.md) |
 | `scripts/suite.py` | test suite: `check`, `run`, `evaluate`, see [examples/suite](../examples/suite/README.md) |
 | `scripts/metrion_diagnose.py` | where did METRION attribute the energy of a run? Run with METRION's Python: `sudo /opt/metrion/.venv/bin/python scripts/metrion_diagnose.py joulecode-runs/…` |

@@ -54,6 +54,31 @@ which also produced the energy measurement tool [METRION](https://github.com/ds-
 >
 > Details and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 
+## New here? Take the tour
+
+Instead of reading everything below first, let joule:code show you what it does — each recipe
+runs one feature on a bundled example and explains the output (Linux with Docker, after the
+`pip install -e .` from the [quick start](#quick-start)):
+
+```bash
+scripts/tour.sh          # menu
+scripts/tour.sh all      # the whole tour, about 25 minutes (energy measurements optional)
+scripts/tour.sh 8 PATH   # check your own repository and get starter files
+```
+
+| # | Recipe | You learn |
+|---|---|---|
+| 1 | Check this machine | which measurement back-end you have: energy or CPU time |
+| 2 | Find hotspots | where a program spends its time (`analyze`) |
+| 3 | Measure a patch | whether a change really saves something (`measure`) |
+| 4 | Noise check | how precise this machine is (`measure --aa`) |
+| 5 | Platform | server, projects, review of a pull request (`serve`, `submit`) |
+| 6 | Energy gate | turning CI red for a measurable regression (`submit --mode gate`) |
+| 7 | Optimise with an LLM | tested and measured candidates (`optimize`) |
+| 8 | Your own repository | `Dockerfile`, `joulecode.yml` and the benchmark |
+
+Nothing in your repositories or the examples is changed; results go to `joulecode-runs/tour/`.
+
 ## Contents
 
 1. [Ways to use joule:code](#ways-to-use-joulecode)
