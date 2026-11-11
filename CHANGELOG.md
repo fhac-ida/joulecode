@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2 (2026-11-11)
+
+- **Guided tour:** `scripts/tour.sh` runs every feature on the examples and explains the output
+  (`all`, a single recipe, `--yes` for CI, `8 PATH` checks your own repository).
+
+### Fixes
+
+- **Server restart during a job:** the re-queued job no longer fails with `FileExistsError`
+  (leftover working directory), and the measurement containers and metrion service of the
+  interrupted run are cleaned up, so the job is measured with the right back-end again.
+- **Web UI:** polling no longer resets scroll positions (log), open sections or the focus of
+  input fields; a failed poll no longer stops the live updates.
+
 ## 0.2.0 (unreleased)
 
 First public version.

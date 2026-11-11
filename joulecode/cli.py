@@ -427,34 +427,18 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_cleanup(args: argparse.Namespace) -> int:
-    from joulecode.cleanup import active_run, cleanup, render
-    from joulecode.energy.metrion_db import MetrionDbBackend
+    from joulecode.cleanup import active_run, cleanup, render, stop_metrion_service
 
     running = active_run()
     if running and not args.force:
         print(f"Aborting: {running} is still running. Stop it first (or use --force).", file=sys.stderr)
         return 2
 
-    notes = []
-
-    def stop_metrion() -> bool:
-        backend = MetrionDbBackend()
-        try:
-            if backend._state() in ("deactivating", "activating"):
-                backend._wait_until_stopped()  # already shutting down
-                return True
-            if backend._state() != "active":
-                return False
-            backend._stop_with_progress()
-            return True
-        except (OSError, RuntimeError) as exc:
-            notes.append(f"metrion service not stopped: {exc}")
-            return False
-
+    notes: list[str] = []
     report = cleanup(
         images=args.images,
         runs_older_than_days=args.runs_older_than,
-        stop_metrion=None if args.keep_metrion else stop_metrion,
+        stop_metrion=None if args.keep_metrion else lambda: stop_metrion_service(notes),
         dry_run=args.dry_run,
     )
     report.notes += notes
@@ -518,11 +502,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print(
         f"Web interface: http://{'localhost' if args.host in ('127.0.0.1', '::1') else args.host}:{args.port}/\n"
     )
+    from joulecode.cleanup import recover_after_restart
+
     config = ServerConfig(
         data_dir=data_dir,
         admin_token=admin_token,
         max_upload_mb=args.max_upload_mb,
         processor=processor,
+        # only real measurements leave containers and a running metrion service behind
+        recover=recover_after_restart if args.processor == "full" else None,
     )
     uvicorn.run(create_app(config), host=args.host, port=args.port, log_level=args.log_level)
     return 0

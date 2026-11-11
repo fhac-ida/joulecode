@@ -143,13 +143,51 @@ function persistent(name) {
 // -- Router + Polling -------------------------------------------------------------
 let timer = null;
 let routeToken = 0;
+
+// Polled views call fn(true). While the user types in a field, has a select open or
+// selects text, a redraw would steal focus or the selection – that tick is skipped.
 function poll(fn, ms) {
   clearTimeout(timer);
   const mine = routeToken;
-  timer = setTimeout(async () => {
+  const tick = async () => {
     if (mine !== routeToken) return;
-    try { await fn(); } catch { /* next attempt */ }
-  }, ms);
+    if (interacting()) { timer = setTimeout(tick, ms); return; }
+    try { await fn(true); } catch { if (mine === routeToken) timer = setTimeout(tick, ms); }
+  };
+  timer = setTimeout(tick, ms);
+}
+
+function interacting() {
+  const a = document.activeElement;
+  if (a && $view.contains(a) && a.matches("input, select, textarea, [contenteditable]")) return true;
+  const sel = getSelection();
+  return Boolean(sel && !sel.isCollapsed && sel.rangeCount && $view.contains(sel.getRangeAt(0).commonAncestorContainer));
+}
+
+// Replaces the view content and carries over UI state of elements with a data-key:
+// open <details>, scroll positions (a log scrolled to the bottom follows new lines),
+// and the page scroll position. Returns false if a polled redraw was skipped.
+function swapView(nodes, fromPoll = false) {
+  if (fromPoll && interacting()) return false;
+  const state = new Map();
+  for (const el of $view.querySelectorAll("[data-key]")) {
+    state.set(el.dataset.key, {
+      open: el.tagName === "DETAILS" ? el.open : null,
+      top: el.scrollTop, left: el.scrollLeft,
+      bottom: el.scrollHeight - el.scrollTop - el.clientHeight < 4,
+    });
+  }
+  const y = scrollY;
+  $view.replaceChildren(...nodes);
+  for (const el of $view.querySelectorAll("[data-key]")) {
+    const st = state.get(el.dataset.key);
+    if (!st) continue;
+    if (st.open !== null && el.tagName === "DETAILS") el.open = st.open;
+    el.scrollLeft = st.left;
+    el.scrollTop = st.bottom && el.hasAttribute("data-follow") ? el.scrollHeight : st.top;
+  }
+  if (fromPoll) scrollTo(scrollX, y);
+  return true;
 }
 
 async function route() {
@@ -201,7 +239,7 @@ async function refreshHealth() {
 }
 
 // -- Projects -------------------------------------------------------------------------
-async function viewProjects() {
+async function viewProjects(fromPoll = false) {
   const mine = routeToken;
   const projects = await api("/api/projects");
   if (mine !== routeToken) return;
@@ -230,7 +268,7 @@ async function viewProjects() {
           h("td", { class: "num" }, p.job_count));
       })))));
   }
-  $view.replaceChildren(head, createBox, body);
+  swapView([head, createBox, body], fromPoll);
   poll(viewProjects, 5000);
 }
 
@@ -353,7 +391,7 @@ joulecode-gate:               # measuring happens on the server; the runner only
 }
 
 // -- Project --------------------------------------------------------------------------
-async function viewProject(key, filters) {
+async function viewProject(key, filters, fromPoll = false) {
   const mine = routeToken;
   filters = filters || { branch: store.get(`joulecode.branch.${key}`) || "", mode: "" };
   const q = new URLSearchParams({ limit: "100" });
@@ -389,29 +427,26 @@ async function viewProject(key, filters) {
     project.trend.length ? trendChart(project.trend) : emptyState("No gate measurement yet", "Gate runs (joulecode submit --mode gate) appear here as a history."));
 
   const tokenArea = persistent(`token-${key}`);
-  const setupCard = h("details", { class: "card" }, h("summary", { style: "cursor:pointer;font-weight:600" }, "Setup & token"),
+  const setupCard = h("details", { class: "card", "data-key": "setup" }, h("summary", { style: "cursor:pointer;font-weight:600" }, "Setup & token"),
     setupSnippets(project.key, null),
     h("div", { style: "margin-top:12px" }, h("button", { class: "btn danger", onclick: async () => {
       if (!adminToken) { tokenArea.replaceChildren(h("div", { class: "banner info" }, "This requires the admin token. ", h("a", { href: "#/settings" }, "Enter token"), ".")); return; }
       try { const r = await api(`/api/projects/${encodeURIComponent(key)}/token`, { method: "POST", admin: true }); tokenArea.replaceChildren(tokenBox(r.token), h("p", { class: "small" }, "The old token is no longer valid.")); }
       catch (e) { tokenArea.replaceChildren(h("div", { class: "banner bad" }, e.message)); }
     } }, "Generate new token")), tokenArea);
-  const wasOpen = $view.querySelector("details.card")?.open;
-  if (wasOpen) setupCard.open = true;
-
-  $view.replaceChildren(
+  swapView([
     h("div", { class: "page-head" }, h("div", {}, h("div", { class: "crumbs" }, h("a", { href: "#/" }, "Projects"), " / "),
       h("h1", {}, project.name), h("div", { class: "meta" }, h("span", {}, "Key ", h("b", { class: "mono" }, project.key)), h("span", {}, `created ${dt(project.created_at)}`)))),
-    kpis, trendCard, jobsCard, setupCard);
-  poll(() => viewProject(key, filters), active ? 2000 : 6000);
+    kpis, trendCard, jobsCard, setupCard], fromPoll);
+  poll((p) => viewProject(key, filters, p), active ? 2000 : 6000);
 }
 
 function kpi(label, value, sub) {
   return h("div", { class: "kpi" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), h("div", { class: "sub" }, sub || " "));
 }
 
-function jobsTable(jobs, withProject = false) {
-  return h("div", { class: "table-wrap" }, h("table", {},
+function jobsTable(jobs, withProject = false, key = "jobs") {
+  return h("div", { class: "table-wrap", "data-key": `table-${key}` }, h("table", {},
     h("thead", {}, h("tr", {}, withProject ? h("th", {}, "Project") : null, h("th", {}, "Mode"), h("th", {}, "Branch / Commit"),
       h("th", {}, "Status"), h("th", {}, "Gate"), h("th", { class: "num" }, "Findings"), h("th", { class: "num" }, "Energy"), h("th", {}, "Submitted"))),
     h("tbody", {}, jobs.map((j) => h("tr", { class: "clickable", onclick: () => (location.hash = `#/j/${j.id}`) },
@@ -473,7 +508,7 @@ function niceStep(raw) {
 }
 
 // -- Job ------------------------------------------------------------------------------
-async function viewJob(id) {
+async function viewJob(id, fromPoll = false) {
   const mine = routeToken;
   const job = await api(`/api/jobs/${encodeURIComponent(id)}`);
   if (mine !== routeToken) return;
@@ -526,15 +561,13 @@ async function viewJob(id) {
     if (r.changed_functions && r.changed_functions.length) parts.push(changedFunctionsCard(r.changed_functions));
     if (job.mode !== "optimize" || (r.findings && r.findings.length)) parts.push(findingsCard(r, job));
   }
-  parts.push(h("details", { class: "card", open: job.status === "failed" || null },
+  parts.push(h("details", { class: "card", "data-key": "log", open: job.status === "failed" || null },
     h("summary", { style: "cursor:pointer;font-weight:600" }, `Log (${job.logs.length})`),
-    h("div", { class: "log", style: "margin-top:10px" }, job.logs.map((l) =>
+    h("div", { class: "log", "data-key": "log-body", "data-follow": true, style: "margin-top:10px" }, job.logs.map((l) =>
       h("div", { class: l.level }, h("time", {}, new Date(l.ts).toLocaleTimeString("en-GB")), l.message)))));
 
-  const openDetails = [...$view.querySelectorAll("details")].map((d) => d.open);
-  $view.replaceChildren(...parts);
-  [...$view.querySelectorAll("details")].forEach((d, i) => { if (openDetails[i]) d.open = true; });
-  if (active) poll(() => viewJob(id), 1200);
+  // a skipped redraw must not end polling, otherwise the final state would never appear
+  if (!swapView(parts, fromPoll) || active) poll((p) => viewJob(id, p), 1200);
 }
 
 function phasesCard(job) {
@@ -599,7 +632,8 @@ function testsCard(tests) {
     tests.map((t) => h("div", { class: "finding" },
       h("div", { class: "line1" }, h("span", { class: `badge ${t.ok ? "good" : "bad"}` }, t.ok ? "✓ passed" : "✗ failed"),
         h("b", {}, t.variant), h("span", { class: "muted small" }, `${num(t.wall_s, 1)} s`)),
-      t.output_tail ? h("details", { open: !t.ok || null }, h("summary", {}, "Output"), h("pre", { class: "snippet", style: "margin-top:6px" }, t.output_tail)) : null)));
+      t.output_tail ? h("details", { "data-key": `test-${t.variant}`, open: !t.ok || null }, h("summary", {}, "Output"),
+        h("pre", { class: "snippet", "data-key": `test-out-${t.variant}`, style: "margin-top:6px" }, t.output_tail)) : null)));
 }
 
 function filesCard(job, files) {
@@ -610,7 +644,7 @@ function filesCard(job, files) {
 }
 
 function hotspotsCard(hotspots) {
-  return h("details", { class: "card" }, h("summary", { style: "cursor:pointer;font-weight:600" }, `Hotspots (${hotspots.length})`),
+  return h("details", { class: "card", "data-key": "hotspots" }, h("summary", { style: "cursor:pointer;font-weight:600" }, `Hotspots (${hotspots.length})`),
     h("p", { class: "small muted" }, "Functions with the largest share of the benchmark's runtime (profiling) – only these were optimised."),
     h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}, "Function"), h("th", {}, "File"), h("th", { class: "num" }, "Share of self time"), h("th", { class: "num" }, "Calls"))),
@@ -657,13 +691,13 @@ function candidatesCard(cands, job, best) {
           c.ci95 ? h("span", { class: "muted small" }, `CI ${pct(c.ci95[0])} … ${pct(c.ci95[1])}`) : null,
           c.maintainability != null ? h("span", { class: "muted small", title: "Reviewer score, 1–5" }, `maintainability ${num(c.maintainability, 1)}/5`) : null),
         h("div", { class: "msg" }, c.summary),
-        c.rationale || (c.concerns && c.concerns.length) || (c.messages && c.messages.length) || c.patch ? h("details", {},
+        c.rationale || (c.concerns && c.concerns.length) || (c.messages && c.messages.length) || c.patch ? h("details", { "data-key": `cand-${c.id}` },
           h("summary", {}, "Details and patch"),
           c.rationale ? h("p", {}, c.rationale.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1")) : null,
           c.parts && c.parts.length ? h("p", { class: "small muted" }, `combination of ${c.parts.join(", ")}`) : null,
           c.concerns && c.concerns.length ? h("div", { class: "small" }, h("b", {}, "Reviewer: "), c.concerns.join(" · ")) : null,
           c.messages && c.messages.length ? h("div", { class: "small muted" }, c.messages.join(" · ")) : null,
-          c.patch ? patchView(c.patch) : null,
+          c.patch ? patchView(c.patch, `cand-patch-${c.id}`) : null,
           c.patch_file ? h("p", {}, h("a", { href: `/api/jobs/${job.id}/files/${c.patch_file}`, download: `${c.id}.patch` }, "Download patch")) : null) : null);
     }));
 }
@@ -684,7 +718,7 @@ function reviewKpis(r, job) {
 }
 
 function changedFunctionsCard(fns) {
-  return h("details", { class: "card" },
+  return h("details", { class: "card", "data-key": "changed-functions" },
     h("summary", { style: "cursor:pointer;font-weight:600" }, `Changed functions (${fns.length})`),
     h("p", { class: "small muted" }, "Functions with changed lines. Findings inside them count as changed code – even if the line itself was not touched."),
     h("div", { class: "table-wrap" }, h("table", {},
@@ -754,25 +788,26 @@ function findingView(f, markDiff) {
     h("div", { class: "msg" }, f.message),
     f.why ? h("div", { class: "small muted" }, f.why) : null,
     f.evidence_detail ? h("div", { class: "small", style: "color:var(--good-text)" }, `Evidence: ${f.evidence_detail}`) : null,
-    f.suggestion ? h("details", {}, h("summary", {}, `Suggestion: ${f.suggestion.description}`), patchView(f.suggestion.patch)) : null);
+    f.suggestion ? h("details", { "data-key": `sug-${f.file}:${f.line}:${f.rule}` }, h("summary", {}, `Suggestion: ${f.suggestion.description}`),
+      patchView(f.suggestion.patch, `sug-patch-${f.file}:${f.line}:${f.rule}`)) : null);
 }
 
-function patchView(patch) {
+function patchView(patch, key) {
   const head = /^(\+\+\+|---|@@|diff |index )/;
-  return h("pre", { class: "patch" }, patch.split("\n").map((l) =>
+  return h("pre", { class: "patch", "data-key": key }, patch.split("\n").map((l) =>
     h("span", { class: head.test(l) ? "hunk" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "" }, l || " ")));
 }
 
 // -- Queue ----------------------------------------------------------------------------
-async function viewQueue() {
+async function viewQueue(fromPoll = false) {
   const mine = routeToken;
   const q = await api("/api/queue");
   if (mine !== routeToken) return;
-  $view.replaceChildren(
+  swapView([
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Queue"),
       h("p", { class: "lede" }, "A single worker processes the jobs one after another – measurements must never overlap, and the LLM and measurements never run at the same time."))),
-    h("div", { class: "card" }, h("h2", {}, "Running"), q.running.length ? jobsTable(q.running, true) : emptyState("Nothing in progress", "")),
-    h("div", { class: "card" }, h("h2", {}, `Queued (${q.queued.length})`), q.queued.length ? jobsTable(q.queued, true) : emptyState("No queued jobs", "")));
+    h("div", { class: "card" }, h("h2", {}, "Running"), q.running.length ? jobsTable(q.running, true, "running") : emptyState("Nothing in progress", "")),
+    h("div", { class: "card" }, h("h2", {}, `Queued (${q.queued.length})`), q.queued.length ? jobsTable(q.queued, true, "queued") : emptyState("No queued jobs", ""))], fromPoll);
   poll(viewQueue, 2000);
 }
 

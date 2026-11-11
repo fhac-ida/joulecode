@@ -90,6 +90,45 @@ def test_dry_run_changes_nothing(tmp_path):
     assert "to remove" in cl.render(report, dry_run=True)
 
 
+def test_recover_after_restart_removes_containers_and_stops_metrion(tmp_path, monkeypatch):
+    monkeypatch.setattr(cl, "LOCK", tmp_path / "lock")
+    (tmp_path / "lock").write_text("999999999 serve (Job abc)")  # the server that died
+    temp = tmp_path / "tmp"
+    (temp / "joulecode-tour.x").mkdir(parents=True)
+    monkeypatch.setattr(cl.tempfile, "gettempdir", lambda: str(temp))
+    client = FakeClient()
+    messages = cl.recover_after_restart(client=client, stop_metrion=lambda notes: True)
+    assert all(c.removed for c in client.box)
+    assert messages == [
+        "2 leftover measurement container(s) of the interrupted run removed",
+        "metrion service left running by the interrupted run stopped",
+    ]
+    assert (temp / "joulecode-tour.x").exists()  # temp dirs may belong to another run
+
+
+def test_recover_after_restart_leaves_an_active_run_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(cl, "LOCK", tmp_path / "lock")
+    cl.acquire_lock("measure")  # a measurement started by hand, alive
+    client = FakeClient()
+    try:
+        messages = cl.recover_after_restart(client=client, stop_metrion=lambda notes: True)
+    finally:
+        cl.release_lock()
+    assert not any(c.removed for c in client.box)
+    assert "joulecode cleanup" in messages[0]
+
+
+def test_recover_after_restart_reports_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(cl, "LOCK", tmp_path / "lock")
+
+    class Broken:
+        @property
+        def containers(self):
+            raise RuntimeError("docker unreachable")
+
+    assert "docker unreachable" in cl.recover_after_restart(client=Broken(), stop_metrion=lambda n: False)[0]
+
+
 def test_lock_blocks_parallel_runs_and_cleanup(tmp_path, monkeypatch):
     from joulecode.cli import main
 

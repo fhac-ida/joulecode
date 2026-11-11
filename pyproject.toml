@@ -1,6 +1,6 @@
 [project]
 name = "joulecode"
-version = "0.2.0.dev0"
+version = "0.2.2"
 description = "Measure and improve the energy efficiency of software – with real energy measurements instead of heuristics."
 readme = "README.md"
 license = { text = "MIT" }

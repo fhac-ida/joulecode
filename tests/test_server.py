@@ -182,6 +182,64 @@ def test_store_queue_order_and_requeue(tmp_path):
     assert store.job(a)["status"] == "queued"
 
 
+class StrictProcessor(DummyProcessor):
+    """Like the real optimize pipeline: fails if its working directory already exists."""
+
+    def run(self, ctx):
+        (ctx.workdir / "optimize" / "baseline").mkdir(parents=True)  # FileExistsError on leftovers
+        assert not (ctx.report_dir / "stale.html").exists()
+        return super().run(ctx)
+
+
+def test_job_interrupted_by_restart_runs_again(tmp_path):
+    def config(**kw):
+        return ServerConfig(
+            data_dir=tmp_path / "data",
+            admin_token=ADMIN,
+            processor=StrictProcessor(delay_s=0),
+            start_worker=False,
+            **kw,
+        )
+
+    # first server: the job is running when the process dies – its clean-up never runs
+    app1 = create_app(config())
+    with TestClient(app1) as c:
+        token = create_project(c)
+        job_id = upload(c, token, pack_worktree(make_repo(tmp_path / "repo")), mode="optimize").json()["id"]
+    assert app1.state.worker.store.claim_next() == job_id
+    d = tmp_path / "data" / "jobs" / job_id
+    (d / "work" / "optimize" / "baseline").mkdir(parents=True)
+    (d / "report").mkdir()
+    (d / "report" / "stale.html").write_text("partial")
+
+    # second server on the same data: the job is queued again, leftovers are cleaned up
+    recovered = []
+    app2 = create_app(config(recover=lambda: recovered.append(1) or ["2 leftover container(s) removed"]))
+    worker = app2.state.worker
+    worker.start = lambda: setattr(worker, "requeued", worker.store.requeue_interrupted())  # no thread
+    with TestClient(app2) as c:
+        worker.start()
+        worker.recover_interrupted()
+        worker.recover_interrupted()  # only once per restart
+        assert worker.process_one()
+        job = c.get(f"/api/jobs/{job_id}").json()
+    assert job["status"] == "done", job["error"]
+    assert recovered == [1]
+    messages = [entry["message"] for entry in job["logs"]]
+    assert "Server was stopped during processing – queued again" in messages
+    assert "2 leftover container(s) removed" in messages
+    assert "Files of the interrupted attempt removed" in messages
+    assert not (d / "work").exists()
+
+
+def test_restart_without_interrupted_jobs_does_not_clean_up(app, client):
+    called = []
+    app.state.worker.recover = lambda: called.append(1) or []
+    app.state.worker.requeued = app.state.worker.store.requeue_interrupted()
+    app.state.worker.recover_interrupted()
+    assert called == []
+
+
 # -- API + Worker -------------------------------------------------------------------------
 def test_project_creation_needs_admin(client):
     assert client.post("/api/projects", json={"key": "x"}).status_code == 401

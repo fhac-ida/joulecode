@@ -29,6 +29,7 @@ import logging
 import os
 import shutil
 import stat
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +58,8 @@ class ServerConfig:
     max_upload_mb: int = 200
     processor: Processor = field(default_factory=DummyProcessor)
     start_worker: bool = True
+    # called once after a restart that re-queued interrupted jobs; returns messages for their log
+    recover: Callable[[], list[str]] | None = None
 
 
 def default_data_dir() -> Path:
@@ -97,7 +100,7 @@ class NewProject(BaseModel):
 def create_app(config: ServerConfig) -> FastAPI:
     data_dir = Path(config.data_dir)
     store = Store(data_dir / "joulecode.db")
-    worker = Worker(store, data_dir, config.processor)
+    worker = Worker(store, data_dir, config.processor, recover=config.recover)
     admin_hash = hash_token(config.admin_token)
 
     @asynccontextmanager

@@ -14,6 +14,11 @@ Storage per job under `<data>/jobs/<id>/`:
     work/head, work/base       unpacked; deleted after the job
     result.json                result incl. gate
     report/                    full reports of gate/optimize (HTML, Markdown, JSON, patches)
+
+After a restart, jobs that were running are queued again. A process that was stopped in the
+middle of a job never reaches its clean-up, so `work/` and a partial `report/` are removed
+before every attempt, and `recover` (if given) removes the measurement containers and the
+metrion service the interrupted run left behind – before the first job is processed.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import logging
 import shutil
 import threading
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 from joulecode.server import gate
@@ -38,22 +44,47 @@ def job_dir(data_dir: Path, job_id: str) -> Path:
 
 
 class Worker:
-    def __init__(self, store: Store, data_dir: Path, processor: Processor, poll_s: float = 2.0):
+    def __init__(
+        self,
+        store: Store,
+        data_dir: Path,
+        processor: Processor,
+        poll_s: float = 2.0,
+        recover: Callable[[], list[str]] | None = None,
+    ):
         self.store = store
         self.data_dir = data_dir
         self.processor = processor
         self.poll_s = poll_s
+        self.recover = recover
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.current: str | None = None
+        self.requeued: list[str] = []
 
     # -- Life cycle -------------------------------------------------------------------
     def start(self) -> None:
-        for job_id in self.store.requeue_interrupted():
+        self.requeued = self.store.requeue_interrupted()
+        for job_id in self.requeued:
             log.warning("Job %s was interrupted and has been queued again", job_id)
         self._thread = threading.Thread(target=self._loop, name="joulecode-worker", daemon=True)
         self._thread.start()
+
+    def recover_interrupted(self) -> None:
+        """Clean up after interrupted jobs (in the worker thread: stopping metrion can take minutes)."""
+        if not self.requeued or not self.recover:
+            return
+        try:
+            messages = self.recover()
+        except Exception as exc:  # noqa: BLE001 - the worker must start anyway
+            log.exception("Clean-up after the restart failed")
+            messages = [f"Clean-up after the restart failed ({exc}) – run `joulecode cleanup`."]
+        for msg in messages:
+            log.warning(msg)
+            for job_id in self.requeued:
+                self.store.log(job_id, "warn", msg)
+        self.requeued = []
 
     def stop(self, timeout: float = 10) -> None:
         self._stop.set()
@@ -70,6 +101,7 @@ class Worker:
         return bool(self._thread and self._thread.is_alive())
 
     def _loop(self) -> None:
+        self.recover_interrupted()
         while not self._stop.is_set():
             try:
                 worked = self.process_one()
@@ -99,6 +131,12 @@ class Worker:
         d = job_dir(self.data_dir, job_id)
         work = d / "work"
         self.store.log(job_id, "info", f"started ({self.processor.name})")
+        # leftovers of an attempt interrupted by a restart (its `finally` never ran)
+        stale = [p for p in (work, d / "report") if p.exists()]
+        for p in stale:
+            shutil.rmtree(p, ignore_errors=True)
+        if stale:
+            self.store.log(job_id, "info", "Files of the interrupted attempt removed")
         try:
             head = work / "head"
             n = safe_extract(d / "head.tar.gz", head)

@@ -7,4 +7,4 @@ measurement chain sit profiling, static analysis, LLM agents that propose candid
 and a small platform for CI.
 """
 
-__version__ = "0.2.0.dev0"
+__version__ = "0.2.2"

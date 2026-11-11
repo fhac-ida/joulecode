@@ -72,6 +72,7 @@ def cleanup(
     runs_dir: Path = Path("joulecode-runs"),
     temp_root: Path | None = None,
     stop_metrion: Callable[[], bool] | None = None,
+    temp_dirs: bool = True,
     dry_run: bool = False,
 ) -> CleanupReport:
     report = CleanupReport()
@@ -104,7 +105,7 @@ def cleanup(
             client.images.prune(filters={"dangling": True, "label": f"{lbl}=1"})
 
     # 3. Temp directories of aborted runs (own ones only)
-    for path in sorted(temp_root.iterdir()) if temp_root.is_dir() else []:
+    for path in sorted(temp_root.iterdir()) if temp_dirs and temp_root.is_dir() else []:
         if path.is_dir() and path.name.startswith(TEMP_PREFIXES) and path.stat().st_uid == os.getuid():
             report.temp_dirs.append(str(path))
             report.freed_mb += _size_mb(path)
@@ -126,6 +127,57 @@ def cleanup(
         report.metrion_stopped = stop_metrion() if not dry_run else False
 
     return report
+
+
+def stop_metrion_service(notes: list[str]) -> bool:
+    """Stop the on-demand metrion service if it is (still) running. True if it was stopped."""
+    from joulecode.energy.metrion_db import MetrionDbBackend
+
+    backend = MetrionDbBackend()
+    try:
+        if backend._state() in ("deactivating", "activating"):
+            backend._wait_until_stopped()  # already shutting down
+            return True
+        if backend._state() != "active":
+            return False
+        backend._stop_with_progress()
+        return True
+    except (OSError, RuntimeError) as exc:
+        notes.append(f"metrion service not stopped: {exc}")
+        return False
+
+
+def recover_after_restart(
+    *, client=None, stop_metrion: Callable[[list[str]], bool] = stop_metrion_service
+) -> list[str]:
+    """After the server was stopped in the middle of a measurement: remove its measurement
+    containers and stop the metrion service it left running – otherwise the next measurement
+    falls back to another back-end or is disturbed. Returns messages for the job log.
+
+    Only if no other joule:code run holds the lock (its containers would be live, not leftovers).
+    Temp directories are left alone for the same reason; `joulecode cleanup` removes them.
+    """
+    running = active_run()
+    if running:
+        return [
+            f"Leftovers of the interrupted run not cleaned up: {running} is active – "
+            "run `joulecode cleanup` once it has finished."
+        ]
+    notes: list[str] = []
+    try:
+        report = cleanup(client=client, temp_dirs=False, stop_metrion=lambda: stop_metrion(notes))
+    except Exception as exc:  # noqa: BLE001 - a failed clean-up must not stop the server
+        return [
+            f"Leftovers of the interrupted run could not be cleaned up ({exc}) – run `joulecode cleanup`."
+        ]
+    messages = []
+    if report.containers:
+        messages.append(
+            f"{len(report.containers)} leftover measurement container(s) of the interrupted run removed"
+        )
+    if report.metrion_stopped:
+        messages.append("metrion service left running by the interrupted run stopped")
+    return messages + notes
 
 
 def render(report: CleanupReport, dry_run: bool) -> str:

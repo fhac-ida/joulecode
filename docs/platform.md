@@ -212,7 +212,10 @@ override `joulecode.yml`.
 - **Reports:** `report/` in the job folder (report.html, report.md, result.json, METRION raw data
   for `joulecode reanalyze`), available via `GET /api/jobs/{id}/files/…`. HTML is served with
   `Content-Security-Policy: sandbox` because it contains code from the repository.
-- **Restart:** interrupted jobs are queued again.
+- **Restart:** interrupted jobs are queued again. Before the first job, a `full` server removes
+  what the interrupted run left behind – its measurement containers and a still running metrion
+  service – unless another joule:code run holds the lock; the job log says what was cleaned up.
+  Temp directories are left to `joulecode cleanup`.
 
 ## Quality gate
 
